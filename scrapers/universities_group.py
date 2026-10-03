@@ -2,51 +2,48 @@
 # Universities Group — UIUC Housing Scraper
 #
 # Strategy:
-#   1. Scrape /building-list/ to build a per-property index:
-#      {url → photo_url, availability_summary, tagline, area}
-#   2. Use those same URLs (not the sitemap) as the scraping list — building-list
-#      is the authoritative set of active properties. Sitemap contains junk
-#      (test pages, expired offer pages, leased-out properties) that we skip.
-#   3. Visit each detail page; parse unit-type tabs for pricing/availability.
-#   4. Merge photo/area data from the building-list index into each record.
-#   5. On timeout, restart the browser context (re-warm Incapsula session) to
-#      avoid the "interrupted by another navigation" cascade failure.
+#   Universities Group moved its public site to a Next.js frontend backed by a
+#   signed WordPress custom API. The old DOM scraper waited on /building-list/
+#   and then parsed detail pages; that page now hydrates from API calls and the
+#   previous selectors are gone. This scraper calls the same signed API as the
+#   frontend:
 #
-# Unlike Green Street, price/availability/beds live on the DETAIL page here (the
-# list page only has photo/area), so by default every run re-fetches all detail
-# pages for freshness. A property whose fetch fails is simply left OUT of this
-# run's output — never fabricated from old data — so `failed` always honestly
-# reflects a real gap. Re-run (or pass --retry-missing, which skips properties
-# already present from a previous run and only (re)fetches the gaps) as many
-# times as needed; each pass narrows the gap until nothing is missing, at which
-# point the run is archived as complete and any earlier same-day partial
-# archives from this session are cleaned up automatically (see scrapers/_archive.py).
-# Caution: don't run pipeline.normalize/ingest while gaps remain — a property
-# missing from this file looks identical to a delisted one and will be removed
-# from the live index (it reappears once a later pass successfully fetches it).
-# See design-docs/ai-pipeline-implementation-phases/phase-5.2.2-universities-group-scraper.md
+#     GET /wp-json/custom/v1/propertyfilters
+#     GET /wp-json/custom/v1/allproperties?page=N
 #
-# Run:    python scrapers/universities_group.py                  # full refresh; failures left as gaps
-#         python scrapers/universities_group.py --retry-missing  # only (re)fetch this session's gaps
-# Output: data/universities_group_raw.json                                (canonical latest, read by normalize)
-#         data/raw_archive/universities_group_raw_YYYY-MM-DD_HHMMSS.json  (timestamped archive, every run;
-#         a run with gaps is saved as ..._partial.json and auto-removed once a complete run succeeds)
+#   allproperties returns every active property with nested unit/floorplan rows,
+#   including price, availability IDs, photos, coordinates, and descriptions.
+#   We map those API fields into the existing raw schema consumed by
+#   pipeline.normalize.
+#
+# Run:    python scrapers/universities_group.py
+# Output: data/universities_group_raw.json
+#         data/raw_archive/universities_group_raw_YYYY-MM-DD_HHMMSS.json
 # Save/archive logic lives in scrapers/_archive.py
 
 import argparse
-import os
+import hashlib
+import hmac
+import html
+import json
 import re
 import time
-import json
+import urllib.error
+import urllib.request
+from typing import Any
+
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright, Browser, Page
 
 from _archive import save_scrape
 
-BUILDING_LIST_URL = "https://ugroupcu.com/building-list/"
-CRAWL_DELAY       = 5   # seconds between detail-page requests (2s triggered Incapsula)
-MAX_CONSECUTIVE_FAILURES = 3   # restart browser context after this many timeouts in a row
-CANONICAL_PATH    = "data/universities_group_raw.json"
+API_BASE_URL = "https://admin.ugroupcu.com/wp-json/custom/v1"
+PUBLIC_BASE_URL = "https://ugroupcu.com"
+PROPERTY_IMAGE_BASE_URL = "https://admin.ugroupcu.com/property_images/property"
+
+# These credentials are shipped in UG's public frontend bundle and are required
+# for the public read-only endpoints above.
+API_KEY = "UG-API-9f4d82a1e7"
+API_SECRET = "9d8b53b0ef40d79368d97c84d8c7d5a2574b50d4a0a2cb42c51d0e7c71e2f06b"
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -54,299 +51,287 @@ USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
+UNKNOWN_AVAILABILITY_LABELS = {
+    # These IDs currently appear in comma-separated API values but are omitted
+    # from propertyfilters. The property-level line1_desc still carries the
+    # human-facing special, so unknown IDs are ignored rather than guessed.
+    "30": "",
+    "61": "",
+}
 
-# ── URL helpers ───────────────────────────────────────────────────────────────
 
-def norm_url(url: str) -> str:
-    """Strip trailing slash for consistent lookup keys."""
-    return url.rstrip("/")
+def signed_api_get(endpoint: str, retries: int = 3) -> dict[str, Any]:
+    """Fetch one UG custom API endpoint using the frontend's HMAC headers."""
+    endpoint = endpoint.lstrip("/")
+    timestamp = str(int(time.time()))
+    signature_path = f"/custom/v1/{endpoint.split('?')[0]}"
+    signature = hmac.new(
+        API_SECRET.encode(),
+        f"{timestamp}{signature_path}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
 
-
-# ── Browser / context helpers ─────────────────────────────────────────────────
-
-def new_page(browser: Browser) -> Page:
-    """Create a fresh context + page with stealth settings and Incapsula warm-up."""
-    ctx = browser.new_context(
-        user_agent=USER_AGENT,
-        viewport={"width": 1280, "height": 800},
-        locale="en-US",
-        timezone_id="America/Chicago",
+    req = urllib.request.Request(
+        f"{API_BASE_URL}/{endpoint}",
+        headers={
+            "Accept": "application/json, text/plain, */*",
+            "Origin": PUBLIC_BASE_URL,
+            "Referer": f"{PUBLIC_BASE_URL}/",
+            "User-Agent": USER_AGENT,
+            "X-API-Key": API_KEY,
+            "X-Timestamp": timestamp,
+            "X-Signature": signature,
+        },
     )
-    page = ctx.new_page()
-    page.add_init_script(
-        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    )
-    page.goto("https://ugroupcu.com/", wait_until="domcontentloaded", timeout=20000)
-    time.sleep(2)
-    return page
+
+    for attempt in range(1, retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read())
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            if attempt == retries:
+                raise RuntimeError(f"UG API request failed for {endpoint}: {e}") from e
+            time.sleep(1.5 * attempt)
+
+    raise RuntimeError(f"UG API request failed for {endpoint}")
 
 
-# ── Building-list index ───────────────────────────────────────────────────────
-
-def scrape_building_index(page: Page) -> dict[str, dict]:
-    """
-    Fetch /building-list/ and return a dict keyed by normalized property URL.
-
-    Fields captured per card:
-      photo_url            — exterior thumbnail  div.featured_bx_inner > a > img
-      availability_summary — div.line1_desc  e.g. "Available August 2026"
-      tagline              — div.line2_desc  e.g. "LUXURY 1 BR!  HUGE!"
-      area                 — p.proerpty_option after stripping "Area: " prefix
-    """
-    print(f"Loading building list: {BUILDING_LIST_URL}")
-    page.goto(BUILDING_LIST_URL, wait_until="networkidle", timeout=30000)
-    time.sleep(3)
-
-    soup  = BeautifulSoup(page.content(), "html.parser")
-    index: dict[str, dict] = {}
-
-    for card in soup.find_all("div", class_="property-list"):
-        inner = card.find("div", class_="featured_bx_inner")
-        if not inner:
-            continue
-        link = inner.find("a", href=True)
-        if not link:
-            continue
-        url = norm_url(link["href"])
-
-        img       = inner.find("img")
-        photo_url = (img.get("src") or img.get("data-src") or "") if img else ""
-
-        availability_summary = ""
-        line1 = inner.find("div", class_="line1_desc")
-        if line1:
-            availability_summary = line1.get_text(strip=True)
-
-        tagline = ""
-        line2   = inner.find("div", class_="line2_desc")
-        if line2:
-            tagline = line2.get_text(strip=True)
-
-        area   = ""
-        area_p = card.find("p", class_="proerpty_option")
-        if area_p:
-            raw  = area_p.get_text(separator=" ", strip=True)
-            area = re.sub(r"^Area:\s*", "", raw).strip()
-
-        index[url] = {
-            "photo_url":            photo_url,
-            "availability_summary": availability_summary,
-            "tagline":              tagline,
-            "area":                 area,
-        }
-
-    print(f"  → {len(index)} properties indexed from building list")
-    return index
+def clean_text(value: str) -> str:
+    if not value:
+        return ""
+    soup = BeautifulSoup(value, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    return html.unescape(re.sub(r"\s+", " ", text)).strip()
 
 
-# ── Detail-page parsers ───────────────────────────────────────────────────────
+def parse_price(value: str | None) -> str:
+    if not value:
+        return ""
+    match = re.search(r"\d+(?:\.\d+)?", str(value).replace(",", ""))
+    if not match:
+        return ""
+    amount = int(float(match.group(0)))
+    return str(amount) if amount > 0 else ""
 
-def parse_beds(unit_type: str) -> int:
-    if "studio" in unit_type.lower():
+
+def parse_float_str(value: str | None) -> str:
+    if not value:
+        return ""
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+    return match.group(0) if match else ""
+
+
+def parse_beds(unit_type: str, unit_name: str = "") -> int:
+    text = f"{unit_type} {unit_name}".lower()
+    if "studio" in text:
         return 0
-    # "bedroom"/"bedrooms" spelled out, or "BR"/"Bed" abbreviations (both appear
-    # in real unit_type text, e.g. "2 BR Flat" vs "6 Bed Townhouse"). \b after the
-    # abbreviations prevents "bed"/"br" from matching mid-word in an unrelated
-    # future listing (e.g. "5 Brand New Studio"); "bedroom" itself doesn't need
-    # the boundary since it's matched as its own alternative, not via the "bed"
-    # prefix. Verified against all 137 distinct Universities Group unit_type
-    # strings in snapshots/listings_2026-07-05.db before this change.
-    match = re.search(r"(\d+)\s*(?:bedroom|bed\b|br\b)", unit_type, re.IGNORECASE)
+    match = re.search(r"(\d+)\s*(?:bedroom|bedrooms|bed\b|br\b)", text, re.IGNORECASE)
     return int(match.group(1)) if match else 0
 
 
-def parse_price(raw: str) -> str:
-    cleaned = re.sub(r"[,$]", "", raw.strip())
-    try:
-        value = int(float(cleaned))
-        return str(value) if value > 0 else ""
-    except ValueError:
+def map_by_id(rows: list[dict], id_key: str, value_key: str) -> dict[str, str]:
+    return {str(row.get(id_key, "")): str(row.get(value_key, "")) for row in rows}
+
+
+def split_ids(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in str(value).split(",") if part.strip() and part.strip() != "0"]
+
+
+def labels_for_ids(value: str | None, lookup: dict[str, str]) -> list[str]:
+    labels: list[str] = []
+    for id_ in split_ids(value):
+        label = lookup.get(id_) or UNKNOWN_AVAILABILITY_LABELS.get(id_, "")
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def availability_for_unit(unit: dict, prop: dict, availability_lookup: dict[str, str]) -> str:
+    labels: list[str] = []
+    for key in ("available_now", "available_soon", "available_next"):
+        for label in labels_for_ids(unit.get(key), availability_lookup):
+            if label not in labels:
+                labels.append(label)
+
+    if any("leased" in label.lower() for label in labels):
+        return "Leased"
+
+    if labels:
+        return ", ".join(labels)
+
+    summary = str(prop.get("line1_desc") or "").strip()
+    if "leased" in summary.lower():
+        return "Leased"
+    return summary
+
+
+def photo_url_for(prop: dict) -> str:
+    filename = str(prop.get("fileupload") or "").strip()
+    if not filename:
         return ""
+    return f"{PROPERTY_IMAGE_BASE_URL}/thumb/{filename}"
 
 
-def fetch_html(page: Page, url: str) -> str | None:
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=25000)
-        time.sleep(3)
-        return page.content()
-    except Exception as e:
-        print(f"  ⚠ Failed to load {url}: {e}")
-        return None
+def floor_plan_url_for(unit: dict) -> str:
+    filename = str(unit.get("floor_plan") or "").strip()
+    if not filename:
+        return ""
+    return f"{PROPERTY_IMAGE_BASE_URL}/floorplan/{filename}"
 
 
-def parse_property(html: str, url: str, info: dict) -> list[dict]:
-    soup    = BeautifulSoup(html, "html.parser")
-    h3      = soup.find("h3")
-    address = h3.get_text(strip=True) if h3 else ""
+def build_lookup_tables(filters: dict) -> dict[str, dict[str, str]]:
+    return {
+        "availability": map_by_id(filters.get("availability", []), "availability_id", "availability_name"),
+        "area": map_by_id(filters.get("area", []), "area_id", "area_name"),
+        "beds": map_by_id(filters.get("beds", []), "units_id", "units_name"),
+        "features": map_by_id(filters.get("features", []), "feature_id", "feature_name"),
+        "type": map_by_id(filters.get("type", []), "type_id", "type_name"),
+    }
 
-    photo_url            = info.get("photo_url", "")
-    availability_summary = info.get("availability_summary", "")
-    tagline              = info.get("tagline", "")
-    area                 = info.get("area", "")
 
-    listings = []
+def area_for(prop: dict, area_lookup: dict[str, str]) -> str:
+    labels = [area_lookup.get(id_, "") for id_ in split_ids(prop.get("area"))]
+    labels = [label for label in labels if label]
+    return ", ".join(dict.fromkeys(labels))
 
-    for unit in soup.find_all("div", class_="tab-content_in_wrapp"):
-        h4        = unit.find("h4", class_="propert_head")
-        unit_type = h4.get_text(strip=True) if h4 else ""
 
-        fields: dict[str, str] = {}
-        rgt = unit.find("div", class_="tab-content_in_rgt")
-        if rgt:
-            for li in rgt.find_all("li"):
-                divs = li.find_all("div")
-                if len(divs) >= 2:
-                    label = divs[0].get_text(strip=True).rstrip(":")
-                    value = divs[1].get_text(strip=True)
-                    fields[label] = value
+def amenities_for(prop: dict, feature_lookup: dict[str, str]) -> str:
+    labels = [feature_lookup.get(id_, "") for id_ in split_ids(prop.get("feature"))]
+    labels = [label for label in labels if label]
+    return ", ".join(dict.fromkeys(labels))
 
-        price_total   = parse_price(fields.get("Price per month", ""))
-        price_per_bed = parse_price(fields.get("Price per occupant", ""))
-        availability  = fields.get("Availability", "").strip()
-        baths         = fields.get("Bathrooms", "").strip()
-        beds          = parse_beds(unit_type)
 
-        if not price_total and not price_per_bed:
-            availability = "Leased"
+def property_type_for(prop: dict, type_lookup: dict[str, str]) -> str:
+    raw = type_lookup.get(str(prop.get("property_type") or ""), "")
+    if raw.lower().startswith("house"):
+        return "House"
+    return "Apartment"
+
+
+def normalize_property(prop: dict, lookups: dict[str, dict[str, str]]) -> list[dict]:
+    address = ", ".join(
+        part for part in [
+            str(prop.get("streat_address") or prop.get("page_heading") or "").strip(),
+            str(prop.get("city") or "").strip(),
+            str(prop.get("state") or "").strip(),
+            str(prop.get("zipcode") or "").strip(),
+        ] if part
+    )
+    if not address:
+        address = str(prop.get("page_heading") or "").strip()
+
+    area = area_for(prop, lookups["area"])
+    amenities = amenities_for(prop, lookups["features"])
+    property_type = property_type_for(prop, lookups["type"])
+    availability_summary = str(prop.get("line1_desc") or "").strip()
+    tagline = str(prop.get("line2_desc") or "").strip()
+    description = clean_text(prop.get("full_description") or prop.get("description") or "")
+    url = f"{PUBLIC_BASE_URL}/property-details/{prop.get('seo_url', '').strip()}"
+    photo_url = photo_url_for(prop)
+
+    listings: list[dict] = []
+    for unit in prop.get("property_details") or []:
+        unit_type = str(unit.get("title") or unit.get("unit_name") or "").strip()
+        unit_name = str(unit.get("unit_name") or lookups["beds"].get(str(unit.get("units") or ""), "")).strip()
+        beds = parse_beds(unit_type, unit_name)
+        baths = parse_float_str(unit.get("bathrooms"))
+        price_total = parse_price(unit.get("tot_price"))
+        price_per_bed = parse_price(unit.get("price_per_occupant"))
+        availability = availability_for_unit(unit, prop, lookups["availability"])
+
+        unit_comments = clean_text(unit.get("unit_comments") or "")
+        full_description = " ".join(part for part in [description, unit_comments] if part)
+        roommate_match = str(unit.get("roommate_check") or "").upper() == "Y"
+        brochure_url = floor_plan_url_for(unit)
 
         listings.append({
-            "company":              "Universities Group",
-            "address":              address,
-            "area":                 area,
-            "property_type":        "Apartment",
-            "roommate_match":       False,
-            "unit_type":            unit_type,
-            "beds":                 str(beds),
-            "baths":                baths,
-            "sqft":                 "",
-            "price_total":          price_total,
-            "price_per_bed":        price_per_bed,
-            "availability":         availability,
-            "url":                  url,
-            "photo_url":            photo_url,
+            "company": "Universities Group",
+            "address": address,
+            "area": area,
+            "property_type": property_type,
+            "roommate_match": roommate_match,
+            "unit_type": unit_type,
+            "beds": str(beds),
+            "baths": baths,
+            "sqft": "",
+            "price_total": price_total,
+            "price_per_bed": price_per_bed,
+            "availability": availability,
+            "url": url,
+            "photo_url": photo_url,
             "availability_summary": availability_summary,
-            "tagline":              tagline,
+            "tagline": tagline,
+            "description": full_description,
+            "amenities": amenities,
+            "lease_dates": availability,
+            "utility_fees": "",
+            "brochure_url": brochure_url,
+            "lat": parse_float_str(prop.get("latitude")),
+            "lng": parse_float_str(prop.get("longitude")),
             "text": (
-                f"{address}, Champaign IL. "
+                f"{address}. "
                 f"{unit_type}: {beds} bed, {baths} bath. "
                 f"Price: ${price_per_bed}/bed per month, ${price_total}/month total. "
                 f"Availability: {availability}. "
                 f"Area: {area}. "
                 f"Company: Universities Group. "
                 f"Link: {url}"
-            )
+            ),
         })
 
     return listings
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+def fetch_all_properties() -> list[dict]:
+    first_page = signed_api_get("allproperties?page=1")
+    total_pages = int(first_page.get("total_pages") or 1)
+    properties = list(first_page.get("properties") or [])
+    print(f"Loaded page 1/{total_pages}: {len(properties)} properties")
 
-def load_previous_listings(path: str) -> dict[str, list[dict]]:
-    """Return {url: [listing dicts]} from a previous run's canonical file. A
-    property never appears here unless it was actually fetched successfully at
-    some point — failures are never written to canonical, so presence in this
-    file always means "good data, obtained by a real fetch." Used by
-    --retry-missing to know which properties can be skipped this run.
-    """
-    if not os.path.exists(path):
-        return {}
-    try:
-        previous = json.loads(open(path).read())
-    except (json.JSONDecodeError, OSError):
-        return {}
+    for page in range(2, total_pages + 1):
+        data = signed_api_get(f"allproperties?page={page}")
+        page_properties = data.get("properties") or []
+        print(f"Loaded page {page}/{total_pages}: {len(page_properties)} properties")
+        properties.extend(page_properties)
+        time.sleep(0.25)
 
-    by_url: dict[str, list[dict]] = {}
-    for listing in previous:
-        url = listing.get("url", "")
-        if url:
-            by_url.setdefault(url, []).append(listing)
-    return by_url
+    total_records = int(first_page.get("total_records") or len(properties))
+    if len(properties) != total_records:
+        raise RuntimeError(f"Expected {total_records} UG properties, got {len(properties)}")
+    return properties
 
 
 def scrape_universities_group(retry_missing: bool = False) -> tuple[list[dict], int]:
-    previous  = load_previous_listings(CANONICAL_PATH) if retry_missing else {}
-    skip_urls = set(previous.keys())
+    if retry_missing:
+        print("--retry-missing is no longer needed; the signed API returns paginated data directly.")
 
-    all_listings: list[dict] = []
-    failed  = 0   # properties with no data at all this run — a real gap, never backfilled
-    skipped = 0   # properties reused as-is because they were already fetched (--retry-missing)
+    filters = signed_api_get("propertyfilters")
+    lookups = build_lookup_tables(filters)
+    properties = fetch_all_properties()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
+    listings: list[dict] = []
+    skipped = 0
+    for prop in properties:
+        prop_listings = normalize_property(prop, lookups)
+        if not prop_listings:
+            skipped += 1
+            continue
+        listings.extend(prop_listings)
 
-        print("Warming up session...")
-        page = new_page(browser)
-
-        # Step 1: scrape building list — this gives us both the property index
-        # AND the authoritative list of active URLs to scrape
-        building_index = scrape_building_index(page)
-        urls           = list(building_index.keys())
-        total          = len(urls)
-        print(f"\nScraping {total} active properties from building list\n")
-
-        if retry_missing:
-            print(f"Mode: RETRY MISSING — reusing {len(skip_urls)} properties already fetched in a "
-                  f"previous run; (re)fetching the remaining {total - len(skip_urls)} that are still "
-                  f"missing\n")
-        else:
-            print(f"Mode: FULL REFRESH — fetching all {total} properties for fresh prices; any that "
-                  f"fail this run are left out (not backfilled) and need a later run to fill in\n")
-
-        consecutive_failures = 0
-
-        for i, url in enumerate(urls, 1):
-            if url in skip_urls:
-                all_listings.extend(previous[url])
-                skipped += 1
-                print(f"  [{i}/{total}] {url}  (already have this one — skipped)")
-                continue
-
-            print(f"  [{i}/{total}] {url}")
-            html = fetch_html(page, url)
-
-            if html is None:
-                failed += 1   # a real gap — never filled with old data
-                consecutive_failures += 1
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                    print(f"  ↻ {consecutive_failures} consecutive failures — restarting browser context")
-                    try:
-                        page.context.close()
-                    except Exception:
-                        pass
-                    page                 = new_page(browser)
-                    consecutive_failures = 0
-                continue
-
-            consecutive_failures = 0
-            listings = parse_property(html, url, building_index[url])
-            print(f"         → {len(listings)} unit type(s)  📷 {building_index[url]['photo_url'][:60]}...")
-            all_listings.extend(listings)
-            time.sleep(CRAWL_DELAY)
-
-        browser.close()
-
-    if failed:
-        plural = "y" if failed == 1 else "ies"
-        print(f"\n⚠ {failed} propert{plural} missing this run (fetch failed, left as a gap — "
-              f"not backfilled)")
+    print(f"\nScraped {len(listings)} unit listing(s) from {len(properties)} properties")
     if skipped:
-        print(f"↺ {skipped} propert{'y' if skipped == 1 else 'ies'} skipped (already have fresh data)")
-
-    return all_listings, failed
+        print(f"Skipped {skipped} properties with no unit data")
+    return listings, 0
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--retry-missing", action="store_true",
-        help="Skip properties already fetched in a previous run; only (re)fetch "
-             "properties still missing (failed last time, or never fetched). "
-             "Use this to cheaply retry just the gaps from a prior run without "
-             "re-fetching everything.",
+        "--retry-missing",
+        action="store_true",
+        help="Accepted for backwards compatibility; the current API scraper fetches all pages directly.",
     )
     args = parser.parse_args()
 
