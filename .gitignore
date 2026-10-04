@@ -62,5 +62,8 @@ data/raw_archive/
 *.log
 logs/
 
+# Local scratch outputs
+tmp/
+
 # Local Claude/Codex worktrees and personal skills
 .claude/
