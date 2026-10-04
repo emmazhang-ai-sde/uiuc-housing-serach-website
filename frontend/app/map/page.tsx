@@ -1,16 +1,13 @@
 "use client"
 
-import { useEffect, useRef, useState  } from "react"
+import { useEffect, useState  } from "react"
 import dynamic from "next/dynamic"
 import AppHeader from "@/components/AppHeader"
 import FilterChips from "@/components/FilterChips"
-import SaveButton from "@/components/SaveButton"
 import MapColorPicker from "@/components/MapColorPicker"
 import { fetchAllListings } from "@/lib/api"
 import type { Listing } from "@/lib/api"
-import type { MapViewHandle } from "@/components/MapView"
 import { DrawerContent } from "@/components/PropertyDrawer"
-import { useSaveAction } from "@/hooks/useSaveAction"
 import { useMapTheme } from "@/hooks/useMapTheme"
 import { useFilters } from "@/contexts/FiltersContext"
 import { logEvent } from "@/lib/logEvent"
@@ -24,8 +21,6 @@ export default function MapPage() {
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(false)
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null)
-  const mapSave    = useSaveAction()
-  const mapViewRef = useRef<MapViewHandle>(null)
 
   function handleSelectListing(listing: Listing | null) {
     setSelectedListing(listing)
@@ -57,24 +52,10 @@ export default function MapPage() {
     return () => { cancelled = true }
   }, [filters])
 
-  const hasAnyFilter =
-    !!filters.beds?.length ||
-    filters.min_price_per_bed != null ||
-    filters.max_price_per_bed != null ||
-    !!filters.property_type ||
-    filters.availability_window != null ||
-    !!filters.company?.length
-
-  function handleSave() {
-    if (!mapViewRef.current) return
-    mapSave.trigger(() => mapViewRef.current!.saveMapHtml())
-  }
-
   return (
     <div className="relative h-screen overflow-hidden">
       {/* Full-bleed map fills the entire background */}
       <MapView
-        ref={mapViewRef}
         listings={listings}
         filters={filters}
         theme={theme}
@@ -111,18 +92,6 @@ export default function MapPage() {
           />
         </div>
       </div>
-
-        {/* Save button — top right */}
-        <div className="absolute top-4 right-4 z-40">
-          <SaveButton
-            status={mapSave.status}
-            onClick={handleSave}
-            label="Save map HTML"
-            disabled={!hasAnyFilter}
-            title={!hasAnyFilter ? "No filters selected yet — try picking one above" : undefined}
-            className="text-xs py-1.5 shadow-md"
-          />
-        </div>
 
         {/* Loading overlay */}
         {loading && (
