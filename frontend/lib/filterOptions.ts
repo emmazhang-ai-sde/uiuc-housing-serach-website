@@ -12,7 +12,15 @@ export const BED_OPTIONS: { label: string; value: number | null }[] = [
   { label: "5+",     value: 5 },
 ]
 
-export type AvailabilityValue = "now" | "june_2026" | "july_2026" | "august_2026" | "leased" | null
+export type AvailabilityValue =
+  | "now"
+  | "june_2026"
+  | "july_2026"
+  | "august_2026"
+  | "january_2027"
+  | "august_2027"
+  | "leased"
+  | null
 
 export const AVAIL_OPTIONS: { label: string; value: AvailabilityValue; dot?: string; dotBorder?: boolean }[] = [
   { label: "All",     value: null },
@@ -20,6 +28,8 @@ export const AVAIL_OPTIONS: { label: string; value: AvailabilityValue; dot?: str
   { label: "Jun '26", value: "june_2026" },
   { label: "Jul '26", value: "july_2026" },
   { label: "Aug '26", value: "august_2026", dot: "#C7DDB5" },
+  { label: "Jan '27", value: "january_2027" },
+  { label: "Aug '27", value: "august_2027", dot: "#A9CFB1" },
   { label: "Leased",  value: "leased",      dot: "#f5f5f5", dotBorder: true },
 ]
 

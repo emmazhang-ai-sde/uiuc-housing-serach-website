@@ -28,7 +28,15 @@ export interface Listing {
 // Shared listing filters used by Card and Map.
 export interface Filters {
   beds: number[] | null
-  availability_window: "now" | "june_2026" | "july_2026" | "august_2026" | "leased" | null
+  availability_window:
+    | "now"
+    | "june_2026"
+    | "july_2026"
+    | "august_2026"
+    | "january_2027"
+    | "august_2027"
+    | "leased"
+    | null
   min_price_per_bed: number | null                    // floor
   max_price_per_bed: number | null                    // ceiling; the buffer below widens THIS end only
   company: string[] | null                            // multi-select: null or [] means every source

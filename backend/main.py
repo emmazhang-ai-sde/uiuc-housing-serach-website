@@ -149,7 +149,7 @@ def get_listings(
         clauses.append("price_per_bed_low <= ?")
         params.append(ceiling)
 
-    # Month windows use '%Month%2026%' (not '%Month 2026%') so dated strings like
+    # Month windows use '%Month%Year%' (not '%Month Year%') so dated strings like
     # "Available August 14, 2026" and annotated ones like "Available August 2026
     # (1 of 12 units)" match too — several scrapers emit exact move-in dates.
     if availability_window == "now":
@@ -160,6 +160,10 @@ def get_listings(
         clauses.append("availability LIKE '%Available July%2026%'")
     elif availability_window == "august_2026":
         clauses.append("availability LIKE '%Available August%2026%'")
+    elif availability_window == "january_2027":
+        clauses.append("availability LIKE '%Available January%2027%'")
+    elif availability_window == "august_2027":
+        clauses.append("(availability LIKE '%Available August%2027%' OR availability LIKE '%August 2027%')")
     elif availability_window == "leased":
         clauses.append("availability LIKE '%Leased%'")
 

@@ -19,6 +19,8 @@ export function buildExportSlug(filters: Filters): string {
       june_2026:    "jun2026",
       july_2026:    "jul2026",
       august_2026:  "aug2026",
+      january_2027: "jan2027",
+      august_2027:  "aug2027",
       leased:       "leased",
     }
     parts.push(avMap[filters.availability_window] ?? filters.availability_window)
