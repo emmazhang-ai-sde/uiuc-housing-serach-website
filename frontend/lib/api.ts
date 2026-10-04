@@ -54,6 +54,7 @@ export const DEFAULT_FILTERS: Filters = {
 
 export interface DataStatus {
   last_scraped: string | null
+  last_scraped_at: string | null
   listing_count: number | null
   property_count: number | null
 }

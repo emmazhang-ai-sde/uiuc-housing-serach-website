@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import jwt
+from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -49,17 +50,31 @@ app.add_middleware(
 def status():
     latest_txt = os.path.join(SNAPSHOTS_DIR, "latest.txt")
     if not os.path.exists(latest_txt):
-        return {"last_scraped": None, "listing_count": None, "property_count": None}
+        return {"last_scraped": None, "last_scraped_at": None, "listing_count": None, "property_count": None}
     date_str = open(latest_txt).read().strip()
     db_path = os.path.join(SNAPSHOTS_DIR, f"listings_{date_str}.db")
     if not os.path.exists(db_path):
-        return {"last_scraped": date_str, "listing_count": None, "property_count": None}
+        return {
+            "last_scraped": date_str,
+            "last_scraped_at": _file_timestamp(latest_txt),
+            "listing_count": None,
+            "property_count": None,
+        }
     con = sqlite3.connect(db_path)
     row = con.execute(
         "SELECT COUNT(*) as listing_count, COUNT(DISTINCT address) as property_count FROM listings"
     ).fetchone()
     con.close()
-    return {"last_scraped": date_str, "listing_count": row[0], "property_count": row[1]}
+    return {
+        "last_scraped": date_str,
+        "last_scraped_at": _file_timestamp(db_path),
+        "listing_count": row[0],
+        "property_count": row[1],
+    }
+
+
+def _file_timestamp(path: str) -> str:
+    return datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).isoformat(timespec="minutes")
 
 
 # Allowed ORDER BY clauses for /api/listings, keyed by the `sort` query param.
