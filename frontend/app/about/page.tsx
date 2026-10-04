@@ -157,6 +157,45 @@ function TypedQuery() {
   )
 }
 
+function GrowthMark() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 88 88"
+      className="h-16 w-16 shrink-0 text-forest-green sm:h-20 sm:w-20 md:h-24 md:w-24"
+    >
+      <circle cx="44" cy="44" r="42" fill="currentColor" opacity="0.08" />
+      <path
+        d="M20 62H72"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="4"
+        opacity="0.22"
+      />
+      <rect x="23" y="47" width="9" height="15" rx="3" fill="currentColor" opacity="0.28" />
+      <rect x="39" y="37" width="9" height="25" rx="3" fill="currentColor" opacity="0.46" />
+      <rect x="55" y="25" width="9" height="37" rx="3" fill="currentColor" opacity="0.72" />
+      <path
+        d="M24 43C34 39 40 31 48 33C57 35 59 23 69 19"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="5"
+      />
+      <path
+        d="M61 18H70V27"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="5"
+      />
+    </svg>
+  )
+}
+
 /* ---------- CSS-only product mocks for the feature rows ---------- */
 
 function MockSources() {
@@ -372,8 +411,11 @@ export default function AboutPage() {
         <Reveal>
           <div className="max-w-7xl mx-auto">
             <div className="mb-16 flex flex-col items-center justify-center gap-4 text-center sm:flex-row sm:gap-8 sm:text-left">
-              <div className={`${heroDisplay.className} text-[96px] font-normal leading-none text-ink-900 sm:text-[128px] md:text-[150px]`}>
-                50+
+              <div className="flex items-center justify-center gap-4 sm:gap-5">
+                <GrowthMark />
+                <div className={`${heroDisplay.className} text-[96px] font-normal leading-none text-ink-900 sm:text-[128px] md:text-[150px]`}>
+                  500+
+                </div>
               </div>
               <p className="max-w-md text-2xl font-medium leading-snug text-ink-900 sm:text-3xl">
                 UIUC students have already found housing with us.

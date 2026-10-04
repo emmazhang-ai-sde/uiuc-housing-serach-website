@@ -179,6 +179,14 @@
       align-items: baseline;
       gap: 20px;
     }
+    .proof-growth {
+      width: clamp(54px, 7vw, 82px);
+      height: clamp(54px, 7vw, 82px);
+      flex: 0 0 auto;
+      color: var(--forest);
+      align-self: center;
+      margin-right: -4px;
+    }
     .proof-num {
       color: var(--forest);
       font-size: clamp(72px, 10vw, 112px);
@@ -593,7 +601,18 @@
       <div class="proof">
         <div class="proof-side"><span>helped by UIUC Housing</span></div>
         <div class="proof-main">
-          <div class="proof-row"><span class="proof-num">50+</span><span class="proof-students">students</span></div>
+          <div class="proof-row">
+            <svg class="proof-growth" aria-hidden="true" viewBox="0 0 88 88">
+              <circle cx="44" cy="44" r="42" fill="currentColor" opacity="0.08"></circle>
+              <path d="M20 62H72" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="4" opacity="0.22"></path>
+              <rect x="23" y="47" width="9" height="15" rx="3" fill="currentColor" opacity="0.28"></rect>
+              <rect x="39" y="37" width="9" height="25" rx="3" fill="currentColor" opacity="0.46"></rect>
+              <rect x="55" y="25" width="9" height="37" rx="3" fill="currentColor" opacity="0.72"></rect>
+              <path d="M24 43C34 39 40 31 48 33C57 35 59 23 69 19" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"></path>
+              <path d="M61 18H70V27" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"></path>
+            </svg>
+            <span class="proof-num">500+</span><span class="proof-students">students</span>
+          </div>
           <div class="proof-found">found their</div>
           <div class="proof-dream"><span class="proof-line"></span><span class="proof-badge">dream house</span></div>
         </div>
