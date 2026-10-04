@@ -1,6 +1,6 @@
 # Phase 5.2.2 — Universities Group Scraper
 
-**Created: 2026-07-04**
+**Created: 2026-07-04**  
 **Updated: 2026-10-03**
 
 > Scraper-specific commands and modes for Universities Group. Part of [Phase 5.2 — Data Refresh Runbook](phase-5.2-data-refresh-runbook.md); see that doc for the full pipeline (normalize/geocode) and shared raw-file/archive behavior. Index: [Phase 5 — Scraper and Normalize Strategy](phase-5-scraper-and-normalize-strategy.md).

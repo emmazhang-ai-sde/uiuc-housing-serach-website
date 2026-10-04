@@ -1,0 +1,87 @@
+name: Refresh listings
+
+on:
+  schedule:
+    # GitHub Actions cron is UTC, so these cover 8:15 AM Central in both
+    # daylight saving time and standard time. The guard step below skips the
+    # non-matching run after converting back to America/Chicago.
+    - cron: "15 13 * * 1-5"
+    - cron: "15 14 * * 1-5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-listings
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check Central Time schedule
+        id: schedule
+        run: |
+          central_day="$(TZ=America/Chicago date +%u)"
+          central_time="$(TZ=America/Chicago date +%H%M)"
+          if [ "$central_day" -le 5 ] && [ "$central_time" = "0815" ]; then
+            echo "run_refresh=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping: current Central time is day $central_day at $central_time."
+            echo "run_refresh=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.schedule.outputs.run_refresh == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install scraper dependencies
+        if: steps.schedule.outputs.run_refresh == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests beautifulsoup4 playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run scrapers
+        if: steps.schedule.outputs.run_refresh == 'true'
+        run: |
+          set -euo pipefail
+          python scrapers/bankier.py
+          python scrapers/green_street.py --fresh
+          python scrapers/jsj.py
+          python scrapers/mhm.py
+          python scrapers/octave.py
+          python scrapers/roland.py
+          python scrapers/seven07.py
+          python scrapers/smile.py
+          python scrapers/universities_group.py
+
+      - name: Normalize and geocode
+        if: steps.schedule.outputs.run_refresh == 'true'
+        run: |
+          set -euo pipefail
+          python -m pipeline.normalize
+          python -m pipeline.geocode
+
+      - name: Commit refreshed data
+        if: steps.schedule.outputs.run_refresh == 'true'
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data snapshots; then
+            echo "No listing data changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data snapshots
+          git commit -m "data: refresh listings $(date -u +%F)"
+          git push

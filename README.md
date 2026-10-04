@@ -150,12 +150,23 @@ Refresh data:
 
 ```bash
 source .venv/bin/activate
-.venv/bin/python scrapers/green_street.py
+.venv/bin/python scrapers/bankier.py
+.venv/bin/python scrapers/green_street.py --fresh
+.venv/bin/python scrapers/jsj.py
+.venv/bin/python scrapers/mhm.py
+.venv/bin/python scrapers/octave.py
+.venv/bin/python scrapers/roland.py
+.venv/bin/python scrapers/seven07.py
+.venv/bin/python scrapers/smile.py
 .venv/bin/python scrapers/universities_group.py
-# run other scrapers as needed
 .venv/bin/python -m pipeline.normalize
 .venv/bin/python -m pipeline.geocode
 ```
+
+GitHub Actions can run the same refresh automatically via
+`.github/workflows/refresh-listings.yml`. It is scheduled for weekdays at
+8:15 AM Central Time. If the scraped data changes, the workflow commits the
+updated `data/` files and `snapshots/` files back to the repository.
 
 Snapshot files:
 
@@ -167,20 +178,20 @@ snapshots/raw_YYYY-MM-DD_<company>.json
 
 ## Data Sources
 
-Latest snapshot: **2026-08-05**
+Latest snapshot: **2026-10-03**
 
-- **1,138** listings
-- **582** unique properties
+- **1,287** listings
+- **618** unique properties
 - **9** active scraped companies
 
 | Company | Listings |
 |---|---:|
 | Green Street Realty | 493 |
-| Universities Group | 380 |
-| Roland Realty | 101 |
-| JSJ Property Management | 46 |
+| Universities Group | 387 |
+| Smile Student Living | 141 |
+| Roland Realty | 102 |
+| JSJ Property Management | 76 |
 | MHM Properties | 37 |
-| Smile Student Living | 30 |
 | Bankier Apartments | 28 |
 | Seven07 | 12 |
 | Octave | 11 |
