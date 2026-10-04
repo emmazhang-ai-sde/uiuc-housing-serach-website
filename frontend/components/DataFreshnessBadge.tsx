@@ -3,21 +3,40 @@
 import { useEffect, useState } from "react"
 import { fetchStatus } from "@/lib/api"
 
+const STATUS_REFRESH_MS = 5 * 60 * 1000
+
 export default function DataFreshnessBadge() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    fetchStatus()
-      .then(status => {
+
+    async function refreshStatus() {
+      try {
+        const status = await fetchStatus()
         if (!cancelled) {
           setLastUpdated(formatSnapshotDateTime(status.last_scraped_at) ?? formatSnapshotDate(status.last_scraped))
         }
-      })
-      .catch(() => {
-        if (!cancelled) setLastUpdated(null)
-      })
-    return () => { cancelled = true }
+      } catch {
+        // Keep the previous timestamp visible if a background refresh blips.
+      }
+    }
+
+    function refreshWhenVisible() {
+      if (document.visibilityState === "visible") void refreshStatus()
+    }
+
+    void refreshStatus()
+    const intervalId = window.setInterval(refreshWhenVisible, STATUS_REFRESH_MS)
+    window.addEventListener("focus", refreshWhenVisible)
+    document.addEventListener("visibilitychange", refreshWhenVisible)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+      window.removeEventListener("focus", refreshWhenVisible)
+      document.removeEventListener("visibilitychange", refreshWhenVisible)
+    }
   }, [])
 
   if (!lastUpdated) return null

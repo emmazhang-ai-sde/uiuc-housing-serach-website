@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server"
 
+export const dynamic = "force-dynamic"
+export const revalidate = 0
+
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+}
+
 // Public endpoint — /api/status carries no user data and has no verify_token
 // dependency on the backend, so unlike the other proxy routes this one does
 // not check the Supabase session.
@@ -13,15 +20,15 @@ export async function GET() {
   try {
     res = await fetch(`${process.env.BACKEND_URL}/api/status`, { cache: "no-store" })
   } catch {
-    return NextResponse.json({ error: "Could not reach backend" }, { status: 502 })
+    return NextResponse.json({ error: "Could not reach backend" }, { status: 502, headers: NO_STORE_HEADERS })
   }
 
   let data: unknown
   try {
     data = await res.json()
   } catch {
-    return NextResponse.json({ error: "Backend returned invalid response" }, { status: 502 })
+    return NextResponse.json({ error: "Backend returned invalid response" }, { status: 502, headers: NO_STORE_HEADERS })
   }
 
-  return NextResponse.json(data, { status: res.status })
+  return NextResponse.json(data, { status: res.status, headers: NO_STORE_HEADERS })
 }

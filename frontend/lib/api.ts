@@ -70,7 +70,7 @@ export interface DataStatus {
 // Every caller swallows the rejection (the counts degrade to "…" placeholders
 // rather than breaking the page), so warn here or the failure is invisible.
 export async function fetchStatus(): Promise<DataStatus> {
-  const res = await fetch(`/api/status`)
+  const res = await fetch(`/api/status`, { cache: "no-store" })
   if (!res.ok) {
     console.warn(
       `fetchStatus: /api/status returned ${res.status}. Listing/property counts ` +
