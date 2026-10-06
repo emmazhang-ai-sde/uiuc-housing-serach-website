@@ -46,8 +46,9 @@ load_dotenv()
 load_dotenv(Path(__file__).resolve().parent.parent / "frontend" / ".env.local")
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
-FROM_ADDRESS = os.environ.get("RESEND_FROM_ADDRESS", "UIUC Housing AI <hello@uiuc-housing-ai.com>")
-LOGIN_URL = "https://uiuc-housing-ai.com/login"
+FROM_ADDRESS = os.environ.get("RESEND_FROM_ADDRESS", "UIUC Housing AI <hello@illinirent.com>")
+SITE_URL = os.environ.get("NEXT_PUBLIC_SITE_URL", "https://illinirent.com").rstrip("/")
+LOGIN_URL = f"{SITE_URL}/login"
 
 DEFAULT_INPUT = Path(__file__).resolve().parent / "mail-merge-batches" / "pending.txt"
 DELAY_BETWEEN_SENDS = 0.6  # seconds — Resend's free tier rate limit is 2 req/sec

@@ -4,7 +4,7 @@ A housing search tool for UIUC students who want one place to compare real listi
 
 The app collects listings directly from property management sites, normalizes them into one dataset, and lets students filter by beds, price, availability, property type, source, and location.
 
-**Live:** [uiuc-housing-ai.com](https://uiuc-housing-ai.com)
+**Live:** [illinirent.com](https://illinirent.com)
 
 ## Product
 

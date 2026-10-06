@@ -6,7 +6,10 @@ import DataFreshnessBadge from "@/components/DataFreshnessBadge";
 import { inter } from "@/lib/fonts";
 import "./globals.css";
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://illinirent.com";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "UIUC Housing Assistant",
   description: `Search ${COMPANIES.map(c => c.name).join(" + ")} listings by price, beds, and location.`,
 };
