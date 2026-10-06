@@ -1,4 +1,4 @@
-# UIUC Housing Assistant
+# UIUC Housing Search Platform
 
 A housing search tool for UIUC students who want one place to compare real listings from Champaign-Urbana landlords.
 
